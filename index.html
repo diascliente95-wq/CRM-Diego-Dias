@@ -91,10 +91,17 @@ async function cloudLoadAndMerge(user){
  let localData=null;try{if(localRaw)localData=JSON.parse(localRaw)}catch{}
  if(snap.exists()){
    const remote=snap.data().data||{};
-   // Cloud copy is authoritative after first sync; keep a local emergency backup before replacing.
+   // Backup local data, then merge records by ID so neither local nor cloud records are discarded.
    if(localRaw)localStorage.setItem(STORAGE+'_backup_before_cloud_'+Date.now(),localRaw);
-   db={...db,...remote,settings:{...db.settings,...remote.settings},messages:remote.messages?.length?remote.messages:defaultMessages};
+   const mergeById=(a,b)=>{const map=new Map();[...(Array.isArray(a)?a:[]),...(Array.isArray(b)?b:[])].forEach(item=>{if(item&&item.id)map.set(item.id,item)});return [...map.values()]};
+   db={...db,...remote,
+    clients:mergeById(localData?.clients,remote.clients),
+    charges:mergeById(localData?.charges,remote.charges),
+    activities:mergeById(localData?.activities,remote.activities),
+    messages:remote.messages?.length?remote.messages:(localData?.messages?.length?localData.messages:defaultMessages),
+    settings:{...db.settings,...localData?.settings,...remote.settings}};
    localStorage.setItem(STORAGE,JSON.stringify(db));
+   await setDoc(ref,{data:db,updatedAt:serverTimestamp()});
  }else{
    // First login: preserve and migrate existing local CRM records, if any.
    if(localData)db={...db,...localData,settings:{...db.settings,...localData.settings},messages:localData.messages?.length?localData.messages:defaultMessages};
