@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cada usuário autenticado só pode acessar os próprios documentos do CRM.
+    match /users/{userId}/crm/{documentId} {
+      allow read, create, update, delete: if request.auth != null
+        && request.auth.uid == userId;
+    }
+
+    // Bloqueia qualquer outro caminho por padrão.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
