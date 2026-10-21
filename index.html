@@ -22,10 +22,25 @@ th{background:#f7faf9;color:#7a8b86;text-transform:uppercase;letter-spacing:.06e
 @media(min-width:1200px){.content{padding:34px 38px}.cards{gap:19px}.stat{padding:23px}}
 @media(max-width:680px){.content{padding:20px 13px}.welcome h1{font-size:25px}.stat{border-radius:15px}.stat strong{font-size:25px}.panel{border-radius:15px}.top{box-shadow:0 3px 12px #173b3b07}}
 
+
+.login-screen{position:fixed;inset:0;z-index:1000;background:radial-gradient(ellipse at 80% 0%,#dff5ec 0,transparent 38%),#f3f7f6;display:grid;place-items:center;padding:20px}.login-card{width:min(420px,100%);background:#fff;border:1px solid #dfebe5;border-radius:24px;padding:30px;box-shadow:0 24px 70px #073f3a18}.login-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px}.login-card h1{font-size:25px;letter-spacing:-.8px;margin:0 0 7px}.login-card p{color:#71817f;font-size:13px;line-height:1.6}.login-card .field{margin:17px 0}.login-card .primary{width:100%;padding:13px}.login-note{font-size:11px!important;background:#fff7df;border:1px solid #f1e4b8;border-radius:11px;padding:11px;color:#765b19!important}.login-error{font-size:12px;color:#b42318;margin-top:10px;min-height:18px}.login-link{border:0;background:none;color:#087052;text-decoration:underline;padding:8px 0;font-size:12px}.app.locked{display:none}
+
 </style>
 </head>
 <body>
-<div class="app">
+
+<div class="login-screen" id="loginScreen">
+ <div class="login-card">
+  <div class="login-brand"><div class="logo">DD</div><div><strong>CRM Diego Dias</strong><div style="font-size:12px;color:#71817f">Acesso ao painel</div></div></div>
+  <h1 id="loginHeading">Proteja seu acesso</h1>
+  <p id="loginIntro">Crie uma senha local para evitar que alguém abra o painel neste navegador.</p>
+  <form id="loginForm"><div class="field"><label for="loginPassword">Senha</label><input id="loginPassword" type="password" minlength="6" autocomplete="current-password" required placeholder="Mínimo de 6 caracteres"></div><div class="field hidden" id="confirmWrap"><label for="confirmPassword">Confirmar senha</label><input id="confirmPassword" type="password" minlength="6" autocomplete="new-password" placeholder="Digite a senha novamente"></div><button class="primary" id="loginSubmit">Criar senha e entrar</button><div class="login-error" id="loginError" role="alert"></div></form>
+  <button class="login-link hidden" id="resetLocalBtn" type="button">Esqueci a senha — redefinir neste navegador</button>
+  <p class="login-note">Limitação de segurança: esta é uma trava local do navegador, não uma autenticação de servidor. Não protege contra inspeção dos arquivos, acesso ao armazenamento do navegador ou uso em outro dispositivo. Para dados reais de clientes, ainda será necessário login seguro no servidor e banco de dados com controle de acesso.</p>
+ </div>
+</div>
+
+<div class="app locked" id="crmApp">
 <aside class="side" id="sidebar"><div class="brand"><div class="logo">DD</div><div><strong>CRM Diego Dias</strong><small>Central de relacionamento</small></div></div>
 <nav class="nav" id="nav">
 <button class="active" data-page="dashboard"><span class="ico">▦</span>Visão geral</button><button data-page="clients"><span class="ico">♙</span>Clientes</button><button data-page="pipeline"><span class="ico">▤</span>Funil de vendas</button><button data-page="tasks"><span class="ico">◷</span>Retornos</button><button data-page="charges"><span class="ico">R$</span>Cobranças</button><button data-page="messages"><span class="ico">✉</span>Mensagens prontas</button><button data-page="settings"><span class="ico">⚙</span>Configurações</button>
@@ -108,4 +123,29 @@ $('#importFile').onchange=e=>{let file=e.target.files[0];if(!file)return;let rea
 $('#clearBtn').onclick=()=>{if(confirm('Isso apagará clientes, cobranças e configurações deste navegador. Exporte um backup antes. Deseja continuar?')){localStorage.removeItem(STORAGE);db={clients:[],charges:[],messages:defaultMessages,settings:{name:'Diego Dias',phone:''},activities:[]};save();renderAll();notify('Dados locais apagados.')}}
 $('#today').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'});
 load();renderAll();
+
+/* Local browser lock: convenience only, not server-side authentication. */
+const AUTH_KEY='crmDiegoDias_localAuth_v1';
+function authSetup(){
+ const saved=localStorage.getItem(AUTH_KEY);
+ const heading=document.getElementById('loginHeading'),intro=document.getElementById('loginIntro'),confirmWrap=document.getElementById('confirmWrap'),submit=document.getElementById('loginSubmit'),reset=document.getElementById('resetLocalBtn');
+ if(saved){heading.textContent='Bem-vindo de volta';intro.textContent='Digite sua senha local para abrir o CRM.';confirmWrap.classList.add('hidden');submit.textContent='Entrar no CRM';reset.classList.remove('hidden');document.getElementById('loginPassword').autocomplete='current-password'}
+ else{heading.textContent='Crie sua senha';intro.textContent='Defina uma senha local para este navegador. Ela não será sincronizada com outros dispositivos.';confirmWrap.classList.remove('hidden');submit.textContent='Criar senha e entrar';reset.classList.add('hidden');document.getElementById('loginPassword').autocomplete='new-password'}
+}
+async function authHash(value){const bytes=new TextEncoder().encode(value);const digest=await crypto.subtle.digest('SHA-256',bytes);return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+document.getElementById('loginForm').addEventListener('submit',async e=>{
+ e.preventDefault();const pass=document.getElementById('loginPassword').value,confirm=document.getElementById('confirmPassword').value,error=document.getElementById('loginError'),saved=localStorage.getItem(AUTH_KEY);
+ error.textContent='';
+ if(pass.length<6){error.textContent='Use uma senha com pelo menos 6 caracteres.';return}
+ if(!saved){if(pass!==confirm){error.textContent='As senhas não são iguais.';return}localStorage.setItem(AUTH_KEY,await authHash(pass));}
+ else if(await authHash(pass)!==saved){error.textContent='Senha incorreta. Tente novamente.';return}
+ document.getElementById('loginScreen').classList.add('hidden');document.getElementById('crmApp').classList.remove('locked');document.getElementById('loginPassword').value='';document.getElementById('confirmPassword').value='';
+});
+document.getElementById('resetLocalBtn').addEventListener('click',()=>{
+ if(confirm('Redefinir a senha local? Isso remove apenas a trava deste navegador. Não apaga os dados do CRM. Qualquer pessoa com acesso a este navegador poderá então configurar outra senha.')){
+ localStorage.removeItem(AUTH_KEY);document.getElementById('loginPassword').value='';document.getElementById('confirmPassword').value='';authSetup();document.getElementById('loginError').textContent='Senha local removida. Crie uma nova senha para continuar.';
+ }
+});
+authSetup();
+
 </script></body></html>
