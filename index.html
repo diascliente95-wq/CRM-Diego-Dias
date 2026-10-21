@@ -31,12 +31,13 @@ th{background:#f7faf9;color:#7a8b86;text-transform:uppercase;letter-spacing:.06e
 
 <div class="login-screen" id="loginScreen">
  <div class="login-card">
-  <div class="login-brand"><div class="logo">DD</div><div><strong>CRM Diego Dias</strong><div style="font-size:12px;color:#71817f">Acesso ao painel</div></div></div>
+  <div class="login-brand"><div class="logo">DD</div><div><strong>CRM Diego Dias</strong><div style="font-size:12px;color:#71817f">Acesso seguro e sincronizado</div></div></div>
+  <div id="cloudStatus" style="font-size:12px;color:#087f5b;margin:10px 0">Conectando ao Firebase…</div>
   <h1 id="loginHeading">Proteja seu acesso</h1>
   <p id="loginIntro">Crie uma senha local para evitar que alguém abra o painel neste navegador.</p>
-  <form id="loginForm"><div class="field"><label for="loginPassword">Senha</label><input id="loginPassword" type="password" minlength="6" autocomplete="current-password" required placeholder="Mínimo de 6 caracteres"></div><div class="field hidden" id="confirmWrap"><label for="confirmPassword">Confirmar senha</label><input id="confirmPassword" type="password" minlength="6" autocomplete="new-password" placeholder="Digite a senha novamente"></div><button class="primary" id="loginSubmit">Criar senha e entrar</button><div class="login-error" id="loginError" role="alert"></div></form>
-  <button class="login-link hidden" id="resetLocalBtn" type="button">Esqueci a senha — redefinir neste navegador</button>
-  <p class="login-note">Limitação de segurança: esta é uma trava local do navegador, não uma autenticação de servidor. Não protege contra inspeção dos arquivos, acesso ao armazenamento do navegador ou uso em outro dispositivo. Para dados reais de clientes, ainda será necessário login seguro no servidor e banco de dados com controle de acesso.</p>
+  <form id="loginForm"><div class="field"><label for="loginEmail">E-mail</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="Seu e-mail"></div><div class="field"><label for="loginPassword">Senha</label><input id="loginPassword" type="password" minlength="6" autocomplete="current-password" required placeholder="Mínimo de 6 caracteres"></div><div class="field hidden" id="confirmWrap"><label for="confirmPassword">Confirmar senha</label><input id="confirmPassword" type="password" minlength="6" autocomplete="new-password" placeholder="Digite a senha novamente"></div><button class="primary" id="loginSubmit">Entrar no CRM</button><div class="login-error" id="loginError" role="alert"></div></form>
+  <button class="login-link" id="createAccountBtn" type="button">Criar minha conta</button>
+  <p class="login-note">Os dados são sincronizados com o Firebase após configurar e publicar as regras do Firestore. Não compartilhe sua senha. Na primeira conexão, os dados locais serão enviados somente se não houver dados na nuvem.</p>
  </div>
 </div>
 
@@ -63,6 +64,55 @@ th{background:#f7faf9;color:#7a8b86;text-transform:uppercase;letter-spacing:.06e
 <div id="modalRoot"></div><div id="toastRoot"></div>
 <script>
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const firebaseConfig = {
+ apiKey: "AIzaSyDndhslYXuFQ26nWbi9q5cwg4zi0Fx-qtg",
+ authDomain: "crm-diego-dias.firebaseapp.com",
+ databaseURL: "https://crm-diego-dias-default-rtdb.firebaseio.com",
+ projectId: "crm-diego-dias",
+ storageBucket: "crm-diego-dias.firebasestorage.app",
+ messagingSenderId: "251636395678",
+ appId: "1:251636395678:web:bd3239a023aa6384acd58f"
+};
+let fb={ready:false,auth:null,db:null,createMode:false,writing:false,cloudTimer:null};
+let cloudUser=null;
+const fbReady=(async()=>{try{
+ const appSdk=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
+ const authSdk=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js');
+ const dbSdk=await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js');
+ const app=appSdk.initializeApp(firebaseConfig);
+ fb.auth=authSdk.getAuth(app);fb.db=dbSdk.getFirestore(app);
+ fb.authSdk=authSdk;fb.dbSdk=dbSdk;fb.ready=true;return true;
+ }catch(e){console.error(e);return false}})();
+async function cloudLoadAndMerge(user){
+ const {doc,getDoc,setDoc,serverTimestamp}=fb.dbSdk;
+ const ref=doc(fb.db,'users',user.uid,'crm','main');
+ const snap=await getDoc(ref);
+ const localRaw=localStorage.getItem(STORAGE);
+ let localData=null;try{if(localRaw)localData=JSON.parse(localRaw)}catch{}
+ if(snap.exists()){
+   const remote=snap.data().data||{};
+   // Cloud copy is authoritative after first sync; keep a local emergency backup before replacing.
+   if(localRaw)localStorage.setItem(STORAGE+'_backup_before_cloud_'+Date.now(),localRaw);
+   db={...db,...remote,settings:{...db.settings,...remote.settings},messages:remote.messages?.length?remote.messages:defaultMessages};
+   localStorage.setItem(STORAGE,JSON.stringify(db));
+ }else{
+   // First login: preserve and migrate existing local CRM records, if any.
+   if(localData)db={...db,...localData,settings:{...db.settings,...localData.settings},messages:localData.messages?.length?localData.messages:defaultMessages};
+   await setDoc(ref,{data:db,updatedAt:serverTimestamp()});
+ }
+ renderAll();renderStats();
+}
+async function cloudSaveNow(){
+ if(!fb.ready||!cloudUser||fb.writing)return;
+ fb.writing=true;
+ try{const {doc,setDoc,serverTimestamp}=fb.dbSdk;
+  await setDoc(doc(fb.db,'users',cloudUser.uid,'crm','main'),{data:db,updatedAt:serverTimestamp()});
+  const status=document.getElementById('cloudStatus');if(status)status.textContent='Sincronizado com a nuvem';
+ }catch(e){console.error(e);const status=document.getElementById('cloudStatus');if(status)status.textContent='Erro ao sincronizar — confira as regras do Firestore';}
+ finally{fb.writing=false}
+}
+function scheduleCloudSave(){if(!cloudUser)return;const status=document.getElementById('cloudStatus');if(status)status.textContent='Salvando na nuvem…';clearTimeout(fb.cloudTimer);fb.cloudTimer=setTimeout(cloudSaveNow,900)}
+
 const STORAGE='crmDiegoDias_v1';
 const stages=['Novo contato','Em atendimento','Em negociação','Venda concluída','Perdido'];
 const defaultMessages=[
@@ -74,7 +124,7 @@ const defaultMessages=[
 ];
 let db={clients:[],charges:[],messages:defaultMessages,settings:{name:'Diego Dias',phone:''},activities:[]};
 function load(){try{const raw=localStorage.getItem(STORAGE);if(raw){const x=JSON.parse(raw);db={...db,...x,settings:{...db.settings,...x.settings},messages:x.messages?.length?x.messages:defaultMessages}}}catch(e){notify('Não foi possível carregar os dados salvos.')} }
-function save(){localStorage.setItem(STORAGE,JSON.stringify(db));renderStats()}
+function save(){localStorage.setItem(STORAGE,JSON.stringify(db));renderStats();scheduleCloudSave()}
 function uid(){return 'id'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function esc(s=''){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function money(n){return Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
@@ -124,28 +174,42 @@ $('#clearBtn').onclick=()=>{if(confirm('Isso apagará clientes, cobranças e con
 $('#today').textContent=new Date().toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'});
 load();renderAll();
 
-/* Local browser lock: convenience only, not server-side authentication. */
-const AUTH_KEY='crmDiegoDias_localAuth_v1';
+/* Firebase email/password authentication and cloud synchronization. */
 function authSetup(){
- const saved=localStorage.getItem(AUTH_KEY);
- const heading=document.getElementById('loginHeading'),intro=document.getElementById('loginIntro'),confirmWrap=document.getElementById('confirmWrap'),submit=document.getElementById('loginSubmit'),reset=document.getElementById('resetLocalBtn');
- if(saved){heading.textContent='Bem-vindo de volta';intro.textContent='Digite sua senha local para abrir o CRM.';confirmWrap.classList.add('hidden');submit.textContent='Entrar no CRM';reset.classList.remove('hidden');document.getElementById('loginPassword').autocomplete='current-password'}
- else{heading.textContent='Crie sua senha';intro.textContent='Defina uma senha local para este navegador. Ela não será sincronizada com outros dispositivos.';confirmWrap.classList.remove('hidden');submit.textContent='Criar senha e entrar';reset.classList.add('hidden');document.getElementById('loginPassword').autocomplete='new-password'}
+ const heading=document.getElementById('loginHeading'),intro=document.getElementById('loginIntro');
+ heading.textContent=fb.createMode?'Criar sua conta':'Entrar no CRM';
+ intro.textContent=fb.createMode?'Cadastre seu e-mail e crie uma senha para acessar seus dados em outros dispositivos.':'Entre com sua conta para carregar os dados sincronizados do CRM.';
+ document.getElementById('confirmWrap').classList.toggle('hidden',!fb.createMode);
+ document.getElementById('confirmPassword').required=fb.createMode;
+ document.getElementById('loginSubmit').textContent=fb.createMode?'Criar conta e migrar dados':'Entrar e sincronizar';
+ document.getElementById('createAccountBtn').textContent=fb.createMode?'Já tenho uma conta — entrar':'Criar minha conta';
 }
-async function authHash(value){const bytes=new TextEncoder().encode(value);const digest=await crypto.subtle.digest('SHA-256',bytes);return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+document.getElementById('createAccountBtn').addEventListener('click',()=>{fb.createMode=!fb.createMode;authSetup();document.getElementById('loginError').textContent='';});
 document.getElementById('loginForm').addEventListener('submit',async e=>{
- e.preventDefault();const pass=document.getElementById('loginPassword').value,confirm=document.getElementById('confirmPassword').value,error=document.getElementById('loginError'),saved=localStorage.getItem(AUTH_KEY);
+ e.preventDefault();
+ const error=document.getElementById('loginError'),email=document.getElementById('loginEmail').value.trim(),pass=document.getElementById('loginPassword').value,confirm=document.getElementById('confirmPassword').value;
  error.textContent='';
  if(pass.length<6){error.textContent='Use uma senha com pelo menos 6 caracteres.';return}
- if(!saved){if(pass!==confirm){error.textContent='As senhas não são iguais.';return}localStorage.setItem(AUTH_KEY,await authHash(pass));}
- else if(await authHash(pass)!==saved){error.textContent='Senha incorreta. Tente novamente.';return}
- document.getElementById('loginScreen').classList.add('hidden');document.getElementById('crmApp').classList.remove('locked');document.getElementById('loginPassword').value='';document.getElementById('confirmPassword').value='';
-});
-document.getElementById('resetLocalBtn').addEventListener('click',()=>{
- if(confirm('Redefinir a senha local? Isso remove apenas a trava deste navegador. Não apaga os dados do CRM. Qualquer pessoa com acesso a este navegador poderá então configurar outra senha.')){
- localStorage.removeItem(AUTH_KEY);document.getElementById('loginPassword').value='';document.getElementById('confirmPassword').value='';authSetup();document.getElementById('loginError').textContent='Senha local removida. Crie uma nova senha para continuar.';
- }
+ if(fb.createMode&&pass!==confirm){error.textContent='As senhas não são iguais.';return}
+ document.getElementById('loginSubmit').disabled=true;
+ try{
+  const ok=await fbReady;if(!ok)throw new Error('Não foi possível carregar o Firebase. Verifique a conexão com a internet.');
+  const a=fb.authSdk;let credential;
+  if(fb.createMode)credential=await a.createUserWithEmailAndPassword(fb.auth,email,pass);
+  else credential=await a.signInWithEmailAndPassword(fb.auth,email,pass);
+  cloudUser=credential.user;
+  await cloudLoadAndMerge(cloudUser);
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('crmApp').classList.remove('locked');
+  const status=document.getElementById('cloudStatus');if(status)status.textContent='Conectado ao Firebase';
+  notify('Login concluído. Dados sincronizados com a nuvem.');
+ }catch(err){
+  console.error(err);
+  const map={'auth/email-already-in-use':'Este e-mail já tem conta. Toque em “Já tenho uma conta — entrar”.','auth/invalid-credential':'E-mail ou senha incorretos.','auth/invalid-email':'E-mail inválido.','auth/weak-password':'A senha deve ter pelo menos 6 caracteres.','auth/operation-not-allowed':'Ative Email/Password em Firebase → Authentication → Sign-in method.','permission-denied':'O Firestore bloqueou o acesso. Publique as regras de segurança antes de continuar.'};
+  error.textContent=map[err.code]||err.message||'Não foi possível entrar. Confira a configuração do Firebase.';
+ }finally{document.getElementById('loginSubmit').disabled=false}
 });
 authSetup();
+fbReady.then(ok=>{const status=document.getElementById('cloudStatus');if(status)status.textContent=ok?'Firebase pronto. Entre ou crie sua conta.':'Falha ao carregar Firebase — confira a internet.'});
 
 </script></body></html>
